@@ -97,10 +97,25 @@ typedef struct Channel Channel;
 
 enum
 {
+	/**
+	 * \brief 切换协程
+	 */
 	CHANEND,
+	/**
+	 * \brief 发送
+	 */
 	CHANSND,
+	/**
+	 * \brief 接受数据
+	 */
 	CHANRCV,
+	/**
+	 * \brief nop无操作
+	 */
 	CHANNOP,
+	/**
+	 * \brief 不切换协程
+	 */
 	CHANNOBLK,
 };
 
@@ -116,20 +131,20 @@ struct Alt
 struct Altarray
 {
 	Alt		**a;
-	unsigned int	n;
-	unsigned int	m;
+	unsigned int	n;// 已经使用
+	unsigned int	m;// 最大容量
 };
 
 struct Channel
 {
-	unsigned int	bufsize;
-	unsigned int	elemsize;
-	unsigned char	*buf;
-	unsigned int	nbuf;
-	unsigned int	off;
-	Altarray	asend;
-	Altarray	arecv;
-	char		*name;
+	unsigned int	bufsize; // 缓冲大小
+	unsigned int	elemsize;// channel中每个元素大小
+	unsigned char	*buf;	//指向缓冲区的指针
+	unsigned int	nbuf;	// 缓冲区已用容量
+	unsigned int	off;	// 当前读取的元素个数
+	Altarray	asend;	// 发送队列
+	Altarray	arecv;	// 接受队列
+	char		*name;	// 名字
 };
 
 int		chanalt(Alt *alts);

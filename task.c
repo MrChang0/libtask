@@ -6,15 +6,15 @@
 
 int	taskdebuglevel;
 int	taskcount;
-int	tasknswitch;
+int	tasknswitch;//协程调度次数
 int	taskexitval;
-Task	*taskrunning;
+Task	*taskrunning;// 正在运行的协程
 
-Context	taskschedcontext;
-Tasklist	taskrunqueue;
+Context	taskschedcontext;// 空context，用于调度回主循环
+Tasklist	taskrunqueue;/* 就绪队列 */
 
-Task	**alltask;
-int		nalltask;
+Task	**alltask;// 所有的协程的地址
+int		nalltask;// alltask的存储空间，每满64个增加64个
 
 static char *argv0;
 static	void		contextswitch(Context *from, Context *to);
@@ -73,7 +73,7 @@ taskstart(uint y, uint x)
 //print("not reacehd\n");
 }
 
-static int taskidgen;
+static int taskidgen;//永远增加的变量，用来当永远不会相等的id
 
 static Task*
 taskalloc(void (*fn)(void*), void *arg, uint stack)
@@ -84,24 +84,32 @@ taskalloc(void (*fn)(void*), void *arg, uint stack)
 	ulong z;
 
 	/* allocate the task and stack together */
+	/* 一起分配任务和栈所需要的内存*/
 	t = malloc(sizeof *t+stack);
 	if(t == nil){
 		fprint(2, "taskalloc malloc: %r\n");
 		abort();
 	}
 	memset(t, 0, sizeof *t);
+	/* 栈指针 */
 	t->stk = (uchar*)(t+1);
+	/* 栈大小 */
 	t->stksize = stack;
+	/* 协程id */
 	t->id = ++taskidgen;
+	/* 执行方法 */
 	t->startfn = fn;
+	/* 参数 */
 	t->startarg = arg;
 
 	/* do a reasonable initialization */
+	/* 初始化 */
 	memset(&t->context.uc, 0, sizeof t->context.uc);
 	sigemptyset(&zero);
 	sigprocmask(SIG_BLOCK, &zero, &t->context.uc.uc_sigmask);
 
 	/* must initialize with current context */
+	/* 必须使用当前的上下文初始化*/
 	if(getcontext(&t->context.uc) < 0){
 		fprint(2, "getcontext: %r\n");
 		abort();
@@ -109,6 +117,8 @@ taskalloc(void (*fn)(void*), void *arg, uint stack)
 
 	/* call makecontext to do the real work. */
 	/* leave a few words open on both ends */
+	/* 调用makecontext来完成真正的工作 */
+	/* 头尾都留点空间。 */
 	t->context.uc.uc_stack.ss_sp = t->stk+8;
 	t->context.uc.uc_stack.ss_size = t->stksize-64;
 #if defined(__sun__) && !defined(__MAKECONTEXT_V2_SOURCE)		/* sigh */
@@ -123,7 +133,7 @@ taskalloc(void (*fn)(void*), void *arg, uint stack)
 	 * function that takes some number of word-sized variables,
 	 * and on 64-bit machines pointers are bigger than words.
 	 */
-//print("make %p\n", t);
+	/* 将64bit拆成32bit */
 	z = (ulong)t;
 	y = z;
 	z >>= 16;	/* hide undefined 32-bit shift from 32-bit compilers */
@@ -139,7 +149,9 @@ taskcreate(void (*fn)(void*), void *arg, uint stack)
 	int id;
 	Task *t;
 
+	/* 申请协程结构的空间以及初始化 */
 	t = taskalloc(fn, arg, stack);
+	/* 协程数目加1 */
 	taskcount++;
 	id = t->id;
 	if(nalltask%64 == 0){
@@ -155,6 +167,7 @@ taskcreate(void (*fn)(void*), void *arg, uint stack)
 	return id;
 }
 
+// 将协程成系统协程
 void
 tasksystem(void)
 {
@@ -175,9 +188,11 @@ void
 taskready(Task *t)
 {
 	t->ready = 1;
+	/* 设置为就绪状态，加入就绪队列 */
 	addtask(&taskrunqueue, t);
 }
 
+/* 将协程（挂起）送入队列中，返回挂起期间调度次数*/
 int
 taskyield(void)
 {
@@ -190,6 +205,7 @@ taskyield(void)
 	return tasknswitch - n - 1;
 }
 
+/* 是否有协程处于准备状态 */
 int
 anyready(void)
 {
@@ -202,6 +218,7 @@ taskexitall(int val)
 	exit(val);
 }
 
+/* 将当前协程退出 */
 void
 taskexit(int val)
 {
@@ -227,24 +244,33 @@ taskscheduler(void)
 
 	taskdebug("scheduler enter");
 	for(;;){
+		/* 如果出了系统协程没有其他协程则，退出*/
 		if(taskcount == 0)
 			exit(taskexitval);
+		/* 队列头部*/
 		t = taskrunqueue.head;
 		if(t == nil){
 			fprint(2, "no runnable tasks! %d tasks stalled\n", taskcount);
 			exit(1);
 		}
+		/* 从就绪队列去除该协程*/
 		deltask(&taskrunqueue, t);
 		t->ready = 0;
 		taskrunning = t;
+		// 协程调度计数 + 1
 		tasknswitch++;
 		taskdebug("run %d (%s)", t->id, t->name);
+		// 切换到刚拿到的协程
 		contextswitch(&taskschedcontext, &t->context);
 //print("back in scheduler\n");
 		taskrunning = nil;
+		/* 协程执行完毕*/
 		if(t->exiting){
+			/* 系统携程不计数*/
 			if(!t->system)
 				taskcount--;
+			/* 把数组中最后一个任务放到要删除的任务的位置*/
+			/* 减少realloc的次数 */
 			i = t->alltaskslot;
 			alltask[i] = alltask[--nalltask];
 			alltask[i]->alltaskslot = i;
@@ -298,6 +324,7 @@ taskgetstate(void)
 	return taskrunning->state;
 }
 
+/* 是否栈溢出 */
 void
 needstack(int n)
 {
@@ -305,8 +332,7 @@ needstack(int n)
 
 	t = taskrunning;
 
-	if((char*)&t <= (char*)t->stk
-	|| (char*)&t - (char*)t->stk < 256+n){
+	if((char*)&t <= (char*)t->stk || (char*)&t - (char*)t->stk < 256+n){
 		fprint(2, "task stack overflow: &t=%p tstk=%p n=%d\n", &t, t->stk, 256+n);
 		abort();
 	}
@@ -355,6 +381,7 @@ main(int argc, char **argv)
 	struct sigaction sa, osa;
 
 	memset(&sa, 0, sizeof sa);
+	/* 接受quit信号,调用taskinfo*/
 	sa.sa_handler = taskinfo;
 	sa.sa_flags = SA_RESTART;
 	sigaction(SIGQUIT, &sa, &osa);
@@ -369,6 +396,7 @@ main(int argc, char **argv)
 
 	if(mainstacksize == 0)
 		mainstacksize = 256*1024;
+	/* 创建一个主协程 */
 	taskcreate(taskmainstart, nil, mainstacksize);
 	taskscheduler();
 	fprint(2, "taskscheduler returned in main!\n");
@@ -384,12 +412,15 @@ addtask(Tasklist *l, Task *t)
 {
 	if(l->tail){
 		l->tail->next = t;
+		// 环形队列
 		t->prev = l->tail;
 	}else{
+		// 队列为空的状态
 		l->head = t;
 		t->prev = nil;
 	}
 	l->tail = t;
+	// 队列尾部
 	t->next = nil;
 }
 
@@ -399,10 +430,12 @@ deltask(Tasklist *l, Task *t)
 	if(t->prev)
 		t->prev->next = t->next;
 	else
+		// 队列为空
 		l->head = t->next;
 	if(t->next)
 		t->next->prev = t->prev;
 	else
+		// 队列最后一个？什么时候会出现这种情况
 		l->tail = t->prev;
 }
 

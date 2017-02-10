@@ -7,16 +7,19 @@ chancreate(int elemsize, int bufsize)
 {
 	Channel *c;
 
+	/* 分配空间 */
+
 	c = malloc(sizeof *c+bufsize*elemsize);
 	if(c == nil){
 		fprint(2, "chancreate malloc: %r");
 		exit(1);
 	}
+	/* 巧妙的不需要配置两个队列 ,队列地址为0,m=n=0，第一次添加队列时会申请空间*/
 	memset(c, 0, sizeof *c);
-	c->elemsize = elemsize;
-	c->bufsize = bufsize;
+	c->elemsize = elemsize;//每个元素的大小
+	c->bufsize = bufsize;//缓冲区大小
 	c->nbuf = 0;
-	c->buf = (uchar*)(c+1);
+	c->buf = (uchar*)(c+1); // 缓冲区首地址
 	return c;
 }
 
@@ -32,13 +35,20 @@ chanfree(Channel *c)
 	free(c);
 }
 
+/**
+ * \brief 
+ * \param a 添加的队列
+ * \param alt 添加的对象
+ */
 static void
 addarray(Altarray *a, Alt *alt)
 {
 	if(a->n == a->m){
+		/* 如果满了,拓展16个 */
 		a->m += 16;
 		a->a = realloc(a->a, a->m*sizeof a->a[0]);
 	}
+	/* 存在最后 */
 	a->a[a->n++] = alt;
 }
 
@@ -53,8 +63,18 @@ delarray(Altarray *a, int i)
  * doesn't really work for things other than CHANSND and CHANRCV
  * but is only used as arg to chanarray, which can handle it
  */
+/**
+ * \brief 返回相反的命令
+ * \param op 命令
+ */
 #define otherop(op)	(CHANSND+CHANRCV-(op))
 
+/**
+ * \brief 
+ * \param c 通道
+ * \param op 命令
+ * \return 对应的队列地址 
+ */
 static Altarray*
 chanarray(Channel *c, uint op)
 {
@@ -68,6 +88,11 @@ chanarray(Channel *c, uint op)
 	}
 }
 
+/**
+ * \brief 是否需要解析
+ * \param a 
+ * \return 
+ */
 static int
 altcanexec(Alt *a)
 {
@@ -78,15 +103,21 @@ altcanexec(Alt *a)
 		return 0;
 	c = a->c;
 	if(c->bufsize == 0){
+		/* 如果无缓冲区 */
 		ar = chanarray(c, otherop(a->op));
+		/* 如果是发送,返回对应的接受队列,反之 */
+		/* 判断是否存在队列或队列有数据 */
 		return ar && ar->n;
 	}else{
 		switch(a->op){
 		default:
 			return 0;
 		case CHANSND:
+			/* 如果是发送数据 */
+			/* 是否有空闲空间 */
 			return c->nbuf < c->bufsize;
 		case CHANRCV:
+			/* 如果接受,是否有数据在缓冲区 */
 			return c->nbuf > 0;
 		}
 	}
@@ -198,6 +229,7 @@ altcopy(Alt *s, Alt *r)
 	}
 }
 
+/* 执行（将发送队列发送出去，将接受队列接受） */
 static void
 altexec(Alt *a)
 {
@@ -207,9 +239,9 @@ altexec(Alt *a)
 	Channel *c;
 
 	c = a->c;
-	ar = chanarray(c, otherop(a->op));
+	ar = chanarray(c, otherop(a->op));// 取出队列
 	if(ar && ar->n){
-		i = rand()%ar->n;
+		i = rand()%ar->n; // i=0
 		other = ar->a[i];
 		altcopy(a, other);
 		altalldequeue(other->xalt);
@@ -285,6 +317,14 @@ if(dbgalt)print("\n");
 	return a[0].xalt - a;
 }
 
+/**
+ * \brief 
+ * \param c 通道对象
+ * \param op 命令 接受或发送
+ * \param p 接受或者发送的对象地址
+ * \param canblock 是否阻塞
+ * \return 
+ */
 static int
 _chanop(Channel *c, int op, void *p, int canblock)
 {
